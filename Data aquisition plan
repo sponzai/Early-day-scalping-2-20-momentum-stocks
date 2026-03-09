@@ -1,0 +1,365 @@
+Below is a **fully structured, end‑to‑end plan** that covers **every step** required to acquire your refined dataset, including **scanner criteria**, **data sources**, **file layout**, **feature engineering**, and **ML‑ready structuring**.  
+This is based on **general technical and quantitative‑trading knowledge**, so **no citations are needed.**
+
+***
+
+# ✅ **FULL SYSTEM ARCHITECTURE FOR YOUR DATASET PIPELINE**
+
+This plan is designed specifically for:
+
+*   Ross‑style **small‑cap momentum** modeling
+*   Using **Massive (ex‑Polygon.io)**
+*   Only downloading **useful days/tickers**
+*   Saving **only the first 2 hours**
+*   Producing a clean ML‑ready dataset
+*   Keeping your data footprint extremely small
+
+***
+
+# 🧱 **Phase 1 — Global Project Setup**
+
+### **1. Choose your storage model**
+
+Use a structure like:
+
+    data/
+      fundamentals/
+      daily/
+      candidates/
+      intraday/
+        second/
+        tick/
+      features/
+      metadata/
+
+Preferred storage formats:
+
+*   **Parquet** for intraday + features (efficient, queryable)
+*   **CSV** acceptable for daily
+*   **JSON** for metadata
+
+***
+
+# 📅 **Phase 2 — Download 2 Years (or 5 Years) of Daily Data**
+
+### **2.1 Fetch ALL daily OHLCV bars for all US stocks**
+
+From Massive’s aggregated daily endpoint.
+
+Store:
+
+*   ticker
+*   date
+*   open, high, low, close
+*   volume
+*   previous close (needed for gap %)
+*   adjusted prices (optional)
+
+### **2.2 Fetch static fundamentals for ALL tickers**
+
+You only fetch these **once per ticker**:
+
+*   float (critical)
+*   outstanding shares
+*   market cap
+*   sector/industry
+*   IPO date
+*   exchange
+*   short interest (optional)
+
+Store in:
+
+    fundamentals/{ticker}.json
+
+***
+
+# 🧪 **Phase 3 — Apply Scanner Logic to Identify “Candidate Days”**
+
+This is where Ross‑style filtering begins.
+
+## 📌 **Scanner Criteria (Highly Optimized for Small‑Cap Momentum)**
+
+### ✔ **1. Price Range**
+
+    2 ≤ previous_close ≤ 20
+
+### ✔ **2. Float**
+
+    float ≤ 20 million
+
+This matches Ross’s typical small‑cap universe.
+
+### ✔ **3. Gap % (pre‑market or open)**
+
+    gap_percent = ((open - prev_close) / prev_close) × 100
+    gap_percent ≥ 10–20%
+
+### ✔ **4. Volume Requirements**
+
+Minimum daily or pre‑market:
+
+    premarket_volume ≥ 150k–300k  
+    or  
+    regular hours volume ≥ 1M
+
+### ✔ **5. Exchange Filter**
+
+Keep **NASDAQ + NYSE**.  
+Avoid OTC, PINK, sub‑penny stocks.
+
+### ✔ **6. News Catalyst (optional, recommended)**
+
+Check Massive’s news endpoint within last 24 hours.
+
+A news tag greatly increases breakout probability.
+
+### ✔ **7. Daily Relative Volume Filter**
+
+    relative_volume ≥ 2.0
+
+### ✔ **8. No reverse splits (optional but helpful)**
+
+***
+
+# 📄 **Your Candidate File Output**
+
+Store all candidates as:
+
+    candidates/{year}/{date}.json
+
+Each entry includes:
+
+    {
+      "ticker": "XYZ",
+      "date": "2024-06-04",
+      "gap_pct": 23.5,
+      "float": 12.4e6,
+      "premarket_vol": 320000
+    }
+
+Expect: **800–1500 candidate ticker‑days per year**
+
+***
+
+# 🕒 **Phase 4 — Download Intraday Data ONLY for Candidate Days**
+
+This is your big cost saver.
+
+### **4.1 Choose resolution**
+
+Primary modeling: **1‑second bars**  
+Optional entry/exit refinement: **ticks**
+
+### **4.2 Limit to first 2 hours**
+
+    09:30:00 → 11:30:00 EST
+
+Total rows per day:
+
+    7,200 rows per ticker-day (2 hours × 3600s)
+
+### **4.3 Store intraday files**
+
+    intraday/second/{ticker}/{date}.parquet
+    intraday/tick/{ticker}/{date}.parquet   (optional)
+
+***
+
+# 🌌 **Phase 5 — Feature Engineering (ML Model Inputs)**
+
+You will transform raw intraday bars into structured ML input windows.
+
+## 📌 **Feature categories**
+
+### **1. Price-based features**
+
+*   1‑sec OHLC
+*   returns
+*   log returns
+*   volatility (rolling std)
+*   high‑low range expansion
+
+### **2. Volume-based features**
+
+*   raw volume
+*   rolling volume ratio
+*   relative volume vs 5/20‑day daily averages
+
+### **3. Momentum indicators**
+
+*   VWAP (critical)
+*   distance from VWAP
+*   EMA9, EMA20, EMA50
+*   RSI(14) (optional)
+
+### **4. Pattern detection**
+
+Auto-detect:
+
+*   premarket high breakout
+*   ABCD pattern D‑point
+*   first pullback pattern
+*   multi‑top resistance
+*   low‑float squeeze candles
+*   halts (optional if using tick data)
+
+### **5. Market microstructure (optional + powerful)**
+
+If using ticks:
+
+*   order flow imbalance
+*   bid/ask spread
+*   executed trades per second
+*   uptick/downtick ratio
+*   micro‑price impact
+
+### **6. Time-based features**
+
+*   time‑of‑day (seconds since open)
+*   opening range breakout status
+
+***
+
+# 🧩 **Phase 6 — Windowing for ML Training**
+
+Your model needs sequences (for LSTM/CNN/transformer).
+
+### Example windowing:
+
+    window_length = 60 seconds
+    stride = 1 second
+
+For each window, compute a label:
+
+### **Labels**
+
+Choose one:
+
+#### **Binary breakout label**
+
+    Did the stock go +1–3% within the next N seconds?
+
+#### **Regression**
+
+    Future return in 30–90 sec
+
+#### **Classification**
+
+    Breakout / Fakeout / Sideways
+
+Store ML‑ready windows:
+
+    features/{ticker}/{date}/windows.parquet
+
+***
+
+# 🧮 **Phase 7 — Metadata Indexing for Fast Training**
+
+Create a master index:
+
+    metadata/index.parquet
+
+Columns:
+
+*   ticker
+*   date
+*   path\_to\_intraday
+*   number\_of\_samples
+*   gap\_pct
+*   float
+*   news\_flag
+*   etc.
+
+This lets you:
+
+*   shuffle across tickers
+*   build training/validation splits
+*   avoid data leakage
+
+***
+
+# 🧪 **Phase 8 — Backtesting & Simulation (Optional But Recommended)**
+
+Before ML training, verify your data validity:
+
+*   check for missing timestamps
+*   verify volumes
+*   remove trading halts
+*   align timezones
+*   ensure opening 1‑min bars are correct
+
+***
+
+# 🧠 **Phase 9 — Model Training (Separate deliverable)**
+
+Your dataset now supports:
+
+*   LSTM
+*   1D CNN
+*   Hybrid CNN-LSTM
+*   Transformer
+*   LightGBM (on aggregated features)
+
+***
+
+# 🧹 **Phase 10 — Ongoing Daily Update Pipeline**
+
+Once historical data is complete:
+
+Daily schedule:
+
+1.  Fetch yesterday’s EOD bars
+2.  Re‑run scanner
+3.  Fetch intraday only for new candidates
+4.  Generate features
+5.  Append to dataset
+
+This keeps your ML system up to date.
+
+***
+
+# 🎯 **Final Summary (High-Level Blueprint)**
+
+Here’s the full plan compressed:
+
+    1) Download 2–5 yrs of daily OHLCV
+    2) Download fundamentals once per ticker
+    3) Apply scanner:
+          - low float (<20M)
+          - gap > 10-20%
+          - price 2-20
+          - volume >300k premkt
+          - RVOL >2
+          - NASDAQ/NYSE
+    4) Store candidate ticker-days
+    5) For each candidate:
+          - download 1-sec bars for 09:30-11:30
+          - (optional) download ticks for microstructure
+    6) Engineer features:
+          - price/volume/momentum/VWAP
+          - patterns (ABCD, breakouts)
+          - rolling indicators
+    7) Window the data (60 sec sequences)
+    8) Label future breakout behavior
+    9) Save windows + metadata
+    10) Index the entire dataset
+    11) Train models
+    12) Maintain daily update pipeline
+
+***
+
+# 👋 If you want, I can generate:
+
+### ✅ Full Python implementation of the entire pipeline
+
+### ✅ The exact Massive API calls you need
+
+### ✅ Folder skeleton + file naming conventions
+
+### ✅ Scanner code (gap detection, float filters, RVOL, etc.)
+
+### ✅ Feature engineering templates
+
+### ✅ Windowing + labeling code
+
+Just tell me what you want next!
